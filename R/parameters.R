@@ -119,6 +119,7 @@ get_parameters <- function(overrides = list(), archetype = "none") {
 
   # Open a list of parameters to store
   parameters <- list(
+    mob = NULL,
     human_population = 10000,
     initial_proportion_child = 0.2,
     initial_proportion_adult = 0.6,

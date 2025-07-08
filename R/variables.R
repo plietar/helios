@@ -69,29 +69,29 @@ create_variables <- function(parameters_list) {
                                            size = parameters_list$leisure_overdispersion_size)
 
   # Initialise and populate the leisure setting variable that stores all the leisure locations an individual COULD go to
-  initial_leisure_settings <- generate_initial_leisure(parameters_list = parameters_list, leisure_setting_sizes = leisure_setting_sizes) # returns list to initialise RaggedInteger
-  leisure_variable <- individual::RaggedInteger$new(initial_values = initial_leisure_settings)
+  # initial_leisure_settings <- generate_initial_leisure(parameters_list = parameters_list, leisure_setting_sizes = leisure_setting_sizes) # returns list to initialise RaggedInteger
+  # leisure_variable <- individual::RaggedInteger$new(initial_values = initial_leisure_settings)
 
   # Due to the sampling method used, the leisure settings for which sizes have been drawn (leisure_setting_sizes)
   # are not always assigned individuals (leisure_variable). To avoid indexing errors, we need to determine
   # whether there are any unassigned leisure settings and remove them from leisure_setting_sizes:
 
   # Generate a vector of indices for the leisure locations for which sizes have been drawn:
-  hypothetical_leisure_locations <- 0:length(leisure_setting_sizes)
+  # hypothetical_leisure_locations <- 0:length(leisure_setting_sizes)
 
   # Generate a vector of the indices of leisure locations which individuals have been assigned to:
-  assigned_leisure_locations <- sort(unique(unlist(initial_leisure_settings)))
+  # assigned_leisure_locations <- sort(unique(unlist(initial_leisure_settings)))
 
   # Determine which, if any, of the potential leisure locations no individuals have been assigned to visit:
-  unassigned_leisure_locations <- setdiff(hypothetical_leisure_locations, assigned_leisure_locations)
+  # unassigned_leisure_locations <- setdiff(hypothetical_leisure_locations, assigned_leisure_locations)
 
   # If there are unvisited leisure locations, remove them from the leisure_setting_sizes object:
-  if (!identical(integer(0), unassigned_leisure_locations)) {
-    leisure_setting_sizes <- leisure_setting_sizes[-unassigned_leisure_locations]
-  }
+  # if (!identical(integer(0), unassigned_leisure_locations)) {
+  #   leisure_setting_sizes <- leisure_setting_sizes[-unassigned_leisure_locations]
+  # }
 
   # Add the assigned leisure locations as a parameter:
-  parameters_list$leisure_indices <- assigned_leisure_locations
+  # parameters_list$leisure_indices <- assigned_leisure_locations
 
   # The above are required in processes.R because some of the initially created leisure settings don't get
   # included, which messes with the indexing. This means that leisure_setting_sizes is the same LENGTH
@@ -100,8 +100,8 @@ create_variables <- function(parameters_list) {
   # are missing the values from leisure_setting_not_assigned_to_anyone.
 
   ## Creating initial CategoricalVariable tracking leisure location an individiual goes to on a given day, which we will dynamically update
-  specific_day_leisure_variable <- individual::CategoricalVariable$new(categories = as.character(assigned_leisure_locations[order(assigned_leisure_locations)]),
-                                                                       initial_values = rep(as.character(0), parameters_list$human_population))
+  # specific_day_leisure_variable <- individual::CategoricalVariable$new(categories = as.character(assigned_leisure_locations[order(assigned_leisure_locations)]),
+  #                                                                      initial_values = rep(as.character(0), parameters_list$human_population))
 
   # Return the list of model variables
   variables_list <- list(
@@ -109,16 +109,17 @@ create_variables <- function(parameters_list) {
     age_class = age_class_variable,
     workplace = workplace_variable,
     school = school_variable,
-    household = household_variable,
-    leisure = leisure_variable,
-    specific_leisure = specific_day_leisure_variable
+    household = household_variable
+    # ,
+    # leisure = leisure_variable,
+    # specific_leisure = specific_day_leisure_variable
   )
 
   # Store setting sizes in a list:
   setting_sizes <- list(
     workplace = get_setting_size(variables_list, setting = "workplace"),
     school = get_setting_size(variables_list, setting = "school"),
-    leisure = leisure_setting_sizes,
+    # leisure = leisure_setting_sizes,
     household = get_setting_size(variables_list, setting = "household")
   )
 
@@ -138,10 +139,10 @@ create_variables <- function(parameters_list) {
   parameters_list$school_specific_riskiness <- generate_setting_specific_riskinesses(parameters_list = parameters_list,
                                                                                      setting = "school",
                                                                                      number_of_locations = num_schools)
-  num_leisure <- length(parameters_list$setting_sizes$leisure)
-  parameters_list$leisure_specific_riskiness <- generate_setting_specific_riskinesses(parameters_list = parameters_list,
-                                                                                      setting = "leisure",
-                                                                                      number_of_locations = num_leisure)
+  # num_leisure <- length(parameters_list$setting_sizes$leisure)
+  # parameters_list$leisure_specific_riskiness <- generate_setting_specific_riskinesses(parameters_list = parameters_list,
+  #                                                                                     setting = "leisure",
+  #                                                                                     number_of_locations = num_leisure)
 
   # If any setting has UVC installed, retrieve the sizes of all of the settings:
   if(any(parameters_list$far_uvc_joint,

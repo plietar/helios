@@ -69,7 +69,103 @@ create_processes <- function(variables_list, events_list, parameters_list, rende
 #'
 #' @family processes
 #' @export
+create_SE_process_mob <- function(variables_list, events_list, parameters_list, renderer) {
+  system <- parameters_list$mob
+  num_households <- max(as.numeric(variables_list$household$get_categories()))
+  num_workplaces <- max(as.numeric(variables_list$workplace$get_categories()))
+  num_schools <- max(as.numeric(variables_list$school$get_categories()))
+
+  household_size <- vapply(seq(num_households), function(i) {
+    variables_list$household$get_size_of(as.character(i))
+  }, integer(1))
+  workplace_size <- vapply(seq(num_workplaces), function(i) {
+    variables_list$workplace$get_size_of(as.character(i))
+  }, integer(1))
+  school_size <- vapply(seq(num_schools), function(i) {
+    variables_list$school$get_size_of(as.character(i))
+  }, integer(1))
+
+  rngs <- mob:::random_create(parameters_list$human_population, system = system)
+
+  households <- mob:::partition_create(
+    length(variables_list$household$get_categories()) + 1,
+    get_individual_households(variables_list$household, parameters_list),
+    system = system)
+
+  workplaces <- mob:::partition_create(
+    length(variables_list$workplace$get_categories()),
+    get_individual_households(variables_list$workplace, parameters_list),
+    system = system)
+
+  schools <- mob:::partition_create(
+    length(variables_list$school$get_categories()),
+    get_individual_households(variables_list$school, parameters_list),
+    system = system)
+
+  # These are all forces of infection per-I.
+  # Community FOI is a single scalar
+  # Household/Workplace/School FOI is different for each location
+  community_FOI <- parameters_list$beta_community / parameters_list$human_population
+  community_prob <- 1 - exp(-community_FOI * parameters_list$dt)
+
+  household_FOI <- parameters_list$household_specific_riskiness * parameters_list$beta_household / household_size
+  household_prob <- c(0, 1 - exp(-household_FOI * parameters_list$dt))
+
+  workplace_FOI <- parameters_list$workplace_specific_riskiness * parameters_list$beta_workplace / workplace_size
+  workplace_prob <- c(0, 1 - exp(-workplace_FOI * parameters_list$dt))
+
+  school_FOI <- parameters_list$school_specific_riskiness * parameters_list$beta_school / school_size
+  school_prob <- c(0, 1 - exp(-school_FOI * parameters_list$dt))
+
+  bitset_convert_to_mob <- function(b) {
+    out <- mob:::bitset_create(b$max_size, system = system)
+    mob:::bitset_insert(out, b$to_vector() - 1, system = system)
+    out
+  }
+
+  function(t) {
+    S <- bitset_convert_to_mob(variables_list$disease_state$get_index_of("S"))
+    I <- bitset_convert_to_mob(variables_list$disease_state$get_index_of("I"))
+
+    infections <- mob:::infection_list_create(system = system)
+
+    household_exposed <- mob:::household_infection_process(rngs, infections, S, I, households, household_prob, system = system)
+    workplace_exposed <- mob:::household_infection_process(rngs, infections, S, I, workplaces, workplace_prob, system = system)
+    school_exposed <- mob:::household_infection_process(rngs, infections, S, I, schools, school_prob, system = system)
+    community_exposed <- mob:::homogeneous_infection_process(rngs, infections, S, I, community_prob, system = system)
+
+    exposed <- mob:::infection_victims(
+      infections,
+      parameters_list$human_population,
+      system = system)
+
+    renderer$render('E_new', mob:::bitset_size(exposed, system = system), t)
+    renderer$render('E_new_household', household_exposed, t)
+    renderer$render('E_new_workplace', workplace_exposed, t)
+    renderer$render('E_new_school', school_exposed, t)
+    renderer$render('E_new_community', community_exposed, t)
+
+    variables_list$disease_state$queue_update(value = "E", index = mob:::bitset_to_vector(exposed, system = system) + 1)
+  }
+}
+
+get_individual_households <- function(var, parameters_list) {
+  # This returns a vector with a value per individual that refers to its "household"
+  # This is very silly code given the original data is produced in this
+  # format already. We should modify the way
+  # generate_initial_{households,schools,workplaces} works
+  categories <- var$get_categories()
+  result <- rep(NA_integer_, parameters_list$human_population)
+  for (c in categories) {
+    result[var$get_index_of(c)$to_vector()] <- as.numeric(c)
+  }
+  result
+}
+
 create_SE_process <- function(variables_list, events_list, parameters_list, renderer){
+  if (!is.null(parameters_list$mob)) {
+    return(create_SE_process_mob(variables_list, events_list, parameters_list, renderer))
+  } else {
 
   ## Pre-calculating the things that only have to be calculated once
 
@@ -115,15 +211,15 @@ create_SE_process <- function(variables_list, events_list, parameters_list, rend
     school_size_list[[i]] <- length(school_index_list[[i]])
   }
 
-  ##### LEISURE #####
-  # Leisure occupancy is dynamically updated each day, so we don't calculate that here.
-  num_leisure <- length(parameters_list$setting_sizes$leisure)
+  #  ##### LEISURE #####
+  #  # Leisure occupancy is dynamically updated each day, so we don't calculate that here.
+  #  num_leisure <- length(parameters_list$setting_sizes$leisure)
 
-  # Create vector to store all the possible leisure visits
-  leisure_indvidual_possible_visits_list <- vector(mode = "list", length = parameters_list$human_population)
-  for (i in seq(parameters_list$human_population)) {
-    leisure_indvidual_possible_visits_list[[i]] <- unlist(variables_list$leisure$get_values(i))
-  }
+  #  # Create vector to store all the possible leisure visits
+  #  leisure_indvidual_possible_visits_list <- vector(mode = "list", length = parameters_list$human_population)
+  #  for (i in seq(parameters_list$human_population)) {
+  #    leisure_indvidual_possible_visits_list[[i]] <- unlist(variables_list$leisure$get_values(i))
+  #  }
 
   ## Process Function
   function(t) {
@@ -216,73 +312,73 @@ create_SE_process <- function(variables_list, events_list, parameters_list, rend
       school_FOI[school_index_list[[i]]] <- spec_school_FOI
     }
 
-    #=== Leisure FOI ===#
-    #=====================#
-    if ((t * parameters_list$dt) == floor((t * parameters_list$dt))) {
+    # #=== Leisure FOI ===#
+    # #=====================#
+    # if ((t * parameters_list$dt) == floor((t * parameters_list$dt))) {
 
-      # Creating vector to store which leisure location individuals visit on a given day
-      leisure_visit <- vector(mode = "numeric", length = parameters_list$human_population)
+    #   # Creating vector to store which leisure location individuals visit on a given day
+    #   leisure_visit <- vector(mode = "numeric", length = parameters_list$human_population)
 
-      # For each individual, work out which leisure location they go to that particular day. 0 = they don't go to any
-      for (i in seq(parameters_list$human_population)) {
+    #   # For each individual, work out which leisure location they go to that particular day. 0 = they don't go to any
+    #   for (i in seq(parameters_list$human_population)) {
 
-        # Sampling which leisure location actually visited (0 = visit none and staying home) from the leisure locations individuals have associated with them (and could visit)
-        leisure_visit[i] <- leisure_indvidual_possible_visits_list[[i]][dqrng::dqsample.int(n = 7, size = 1)]
+    #     # Sampling which leisure location actually visited (0 = visit none and staying home) from the leisure locations individuals have associated with them (and could visit)
+    #     leisure_visit[i] <- leisure_indvidual_possible_visits_list[[i]][dqrng::dqsample.int(n = 7, size = 1)]
 
-      }
+    #   }
 
-      # Updating the leisure setting visited that day
-      ## Note that we include all leisure locations as categories irrespective of whether they're visited on a particular day
-      ## Doesn't affect the FOI calculation, as places with no visits on a day don't update the FOI vector
-      ## Also note that parameters_list$leisure_indices aren't 1:num_leisure as i) it includes 0 (no leisure visited); and
-      ## 2) as part of the leisure variable creation in variables.R, some initially created leisure locations
-      ##    don't feature in the RaggedInteger vector, and so these locations are removed as indices.
-      variables_list$specific_leisure$initialize(categories = as.character(parameters_list$leisure_indices),
-                                                 initial_values = as.character(leisure_visit)) #  update the states with leisure_visit for that day
-    }
+    #   # Updating the leisure setting visited that day
+    #   ## Note that we include all leisure locations as categories irrespective of whether they're visited on a particular day
+    #   ## Doesn't affect the FOI calculation, as places with no visits on a day don't update the FOI vector
+    #   ## Also note that parameters_list$leisure_indices aren't 1:num_leisure as i) it includes 0 (no leisure visited); and
+    #   ## 2) as part of the leisure variable creation in variables.R, some initially created leisure locations
+    #   ##    don't feature in the RaggedInteger vector, and so these locations are removed as indices.
+    #   variables_list$specific_leisure$initialize(categories = as.character(parameters_list$leisure_indices),
+    #                                              initial_values = as.character(leisure_visit)) #  update the states with leisure_visit for that day
+    # }
 
-    # Open empty vector to store each individuals leisure-specific FOI:
-    leisure_FOI <- vector(mode = "numeric", length = parameters_list$human_population)
+    # # Open empty vector to store each individuals leisure-specific FOI:
+    # leisure_FOI <- vector(mode = "numeric", length = parameters_list$human_population)
 
-    # Calculating leisure-specific FOI for each individual
-    ## Note that we include all possible leisure locations as categories irrespective of whether they're visited on a particular day
-    ## Doesn't affect the FOI calculation, as places with no visits on a day don't update the FOI vector (FOI is NaN which doesn't index in a vector)
-    ## And note that we're specifically looping through the indices of each leisure locations (for reasons described above)
-    leisure_locations <-  variables_list$specific_leisure$get_categories()
-    leisure_locations <- leisure_locations[leisure_locations != "0"] # removing the "0" category which is not visited
-    for (i in 1:length(leisure_locations)) {
+    # # Calculating leisure-specific FOI for each individual
+    # ## Note that we include all possible leisure locations as categories irrespective of whether they're visited on a particular day
+    # ## Doesn't affect the FOI calculation, as places with no visits on a day don't update the FOI vector (FOI is NaN which doesn't index in a vector)
+    # ## And note that we're specifically looping through the indices of each leisure locations (for reasons described above)
+    # leisure_locations <-  variables_list$specific_leisure$get_categories()
+    # leisure_locations <- leisure_locations[leisure_locations != "0"] # removing the "0" category which is not visited
+    # for (i in 1:length(leisure_locations)) {
 
-      # Access the index of the specific leisure locations being considered
-      spec_leisure_location <- as.numeric(leisure_locations[i])
+    #   # Access the index of the specific leisure locations being considered
+    #   spec_leisure_location <- as.numeric(leisure_locations[i])
 
-      # Only going through below steps if a leisure location is actually visited (i.e. != 0)
-      if (spec_leisure_location != 0) {
+    #   # Only going through below steps if a leisure location is actually visited (i.e. != 0)
+    #   if (spec_leisure_location != 0) {
 
-        # Retrieve the indices of individuals visiting the specific leisure location
-        spec_leisure <- variables_list$specific_leisure$get_index_of(as.character(spec_leisure_location))
+    #     # Retrieve the indices of individuals visiting the specific leisure location
+    #     spec_leisure <- variables_list$specific_leisure$get_index_of(as.character(spec_leisure_location))
 
-        # Count the number of infectious individuals in the relevant leisure setting
-        spec_leisure_I_size <- individual:::bitset_count_and(I,  spec_leisure)
+    #     # Count the number of infectious individuals in the relevant leisure setting
+    #     spec_leisure_I_size <- individual:::bitset_count_and(I,  spec_leisure)
 
-        # Calculate the leisure-specific FOI for the i-th leisure location - with and without farUVC installed
-        ## Note that leisure_specific_riskiness uses indices 1:num_leisure to index the leisure locations
-        ## (this is in contrast to leisure_indices, which uses the original indices from their generation,
-        ##  and which span 1 to max(leisure_indices) with some gaps)
-        if (parameters_list$far_uvc_leisure) {
-          if (parameters_list$uvc_leisure[i] == 1 & t > parameters_list$far_uvc_leisure_timestep) {
-            spec_leisure_FOI <- parameters_list$leisure_specific_riskiness[i] * (1 - parameters_list$far_uvc_leisure_efficacy) * (parameters_list$beta_leisure * spec_leisure_I_size / spec_leisure$size()) ## this calculation needs more in it
-          } else {
-            spec_leisure_FOI <- parameters_list$leisure_specific_riskiness[i] * parameters_list$beta_leisure * spec_leisure_I_size / spec_leisure$size() ## this calculation needs more in it
-          }
-        } else {
-          spec_leisure_FOI <- parameters_list$leisure_specific_riskiness[i] * parameters_list$beta_leisure * spec_leisure_I_size / spec_leisure$size() ## this calculation needs more in it
-        }
+    #     # Calculate the leisure-specific FOI for the i-th leisure location - with and without farUVC installed
+    #     ## Note that leisure_specific_riskiness uses indices 1:num_leisure to index the leisure locations
+    #     ## (this is in contrast to leisure_indices, which uses the original indices from their generation,
+    #     ##  and which span 1 to max(leisure_indices) with some gaps)
+    #     if (parameters_list$far_uvc_leisure) {
+    #       if (parameters_list$uvc_leisure[i] == 1 & t > parameters_list$far_uvc_leisure_timestep) {
+    #         spec_leisure_FOI <- parameters_list$leisure_specific_riskiness[i] * (1 - parameters_list$far_uvc_leisure_efficacy) * (parameters_list$beta_leisure * spec_leisure_I_size / spec_leisure$size()) ## this calculation needs more in it
+    #       } else {
+    #         spec_leisure_FOI <- parameters_list$leisure_specific_riskiness[i] * parameters_list$beta_leisure * spec_leisure_I_size / spec_leisure$size() ## this calculation needs more in it
+    #       }
+    #     } else {
+    #       spec_leisure_FOI <- parameters_list$leisure_specific_riskiness[i] * parameters_list$beta_leisure * spec_leisure_I_size / spec_leisure$size() ## this calculation needs more in it
+    #     }
 
-        # Store the leisure location-specific FOI at the indices of all individuals that attend it:
-        leisure_FOI[spec_leisure$to_vector()] <- spec_leisure_FOI
-      }
+    #     # Store the leisure location-specific FOI at the indices of all individuals that attend it:
+    #     leisure_FOI[spec_leisure$to_vector()] <- spec_leisure_FOI
+    #   }
 
-    }
+    # }
 
     #=== Community FOI ===#
     #=====================#
@@ -295,7 +391,7 @@ create_SE_process <- function(variables_list, events_list, parameters_list, rend
 
     # Sum the household, workplace, school leisure, and community FOIs to get the total FOI for each
     # individual:
-    total_FOI <- household_FOI + workplace_FOI + school_FOI + leisure_FOI + community_FOI
+    total_FOI <- household_FOI + community_FOI + workplace_FOI + school_FOI #+ leisure_FOI
 
     # Render the setting-specific FOIs is diagnostic rendering turned on:
     if(parameters_list$render_diagnostics) {
@@ -326,6 +422,7 @@ create_SE_process <- function(variables_list, events_list, parameters_list, rend
     variables_list$disease_state$queue_update(value = "E",index = S)
 
   }
+}
 }
 
 
